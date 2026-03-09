@@ -198,13 +198,6 @@ function setCachedScan(key, value) {
 }
 
 // ================================================================
-// WEIGHTED SCORE CONSTANTS
-// ================================================================
-const WEIGHT_RULES_HIGH = 0.7;
-const WEIGHT_AI_THREAT = 0.6;
-const WEIGHT_GSB = 0.9;
-
-// ================================================================
 // URL REPUTATION ANALYSIS
 // ================================================================
 function analyzeUrlReputation(url) {
@@ -594,22 +587,11 @@ app.post("/scan/website", async (req, res) => {
     console.warn("[ShieldAI] Local AI error:", e.message);
   }
 
-  // Weighted score merging
-  const combinedRulesScore = Math.max(phishing.score, urlRep.score);
-  const finalPhishing = Math.min(100, Math.max(
-    combinedRulesScore * WEIGHT_RULES_HIGH,
-    sbScore * WEIGHT_GSB,
-    (aiResult?.phishing || 0) * WEIGHT_AI_THREAT
-  ));
-  const finalPiracy = Math.min(100, Math.max(
-    piracy.score * WEIGHT_RULES_HIGH,
-    (aiResult?.piracy || 0) * WEIGHT_AI_THREAT
-  ));
-  const finalMalware = Math.min(100, Math.max(
-    (aiResult?.malware || 0) * WEIGHT_AI_THREAT,
-    sbResult.flagged ? 80 * WEIGHT_GSB : 0
-  ));
-  const finalScam = Math.min(100, (aiResult?.scam || 0) * WEIGHT_AI_THREAT);
+  // Raw score merging — use the highest signal from each source
+  const finalPhishing = Math.max(phishing.score, urlRep.score, sbScore, aiResult?.phishing || 0);
+  const finalPiracy = Math.max(piracy.score, aiResult?.piracy || 0);
+  const finalMalware = Math.max(aiResult?.malware || 0, sbResult.flagged ? 80 : 0);
+  const finalScam = aiResult?.scam || 0;
   const finalScore = Math.max(finalPhishing, finalPiracy, finalMalware, finalScam);
 
   const allFlags = [
@@ -755,38 +737,114 @@ app.post("/scan/code", async (req, res) => {
   });
 });
 
+// ── IMAGE HELPERS ─────────────────────────────────────────────────
+
+function extractFilename(url) {
+  if (!url) return '';
+  try {
+    return new URL(url).pathname.split('/').pop() || '';
+  } catch {
+    return url.split('/').pop() || '';
+  }
+}
+
+// Rule-based heuristics: score a URL/filename for AI-image likelihood.
+// Returns { score, flags, generator }.
+function scoreAiImageUrl(imageUrl) {
+  if (!imageUrl) return { score: 0, flags: [], generator: 'Unknown' };
+  const flags = [];
+  let score = 0;
+  let generator = 'Unknown';
+  try {
+    const hostname = new URL(imageUrl).hostname.toLowerCase();
+    const fullUrl = imageUrl.toLowerCase();
+    const filename = extractFilename(imageUrl).toLowerCase();
+
+    // Known AI generation service hosts → high confidence
+    const aiHostMap = [
+      { pattern: 'cdn.midjourney.com',    gen: 'Midjourney',        s: 80 },
+      { pattern: 'midjourney',            gen: 'Midjourney',        s: 80 },
+      { pattern: 'dalle',                 gen: 'DALL-E',            s: 80 },
+      { pattern: 'openai',                gen: 'DALL-E',            s: 80 },
+      { pattern: 'stability.ai',          gen: 'Stable Diffusion',  s: 80 },
+      { pattern: 'dreamstudio',           gen: 'Stable Diffusion',  s: 80 },
+      { pattern: 'nightcafe',             gen: 'NightCafe',         s: 80 },
+      { pattern: 'runwayml',              gen: 'Runway',            s: 80 },
+      { pattern: 'replicate',             gen: 'Replicate AI',      s: 80 },
+      { pattern: 'leonardo.ai',           gen: 'Leonardo.ai',       s: 80 },
+      { pattern: 'firefly.adobe',         gen: 'Adobe Firefly',     s: 80 },
+      { pattern: 'designer.microsoft',    gen: 'DALL-E',            s: 80 },
+      { pattern: 'bing.com/images/create',gen: 'DALL-E',            s: 80 },
+      { pattern: 'civitai.com',           gen: 'Stable Diffusion',  s: 60 },
+      { pattern: 'tensor.art',            gen: 'Unknown',           s: 60 },
+      { pattern: 'arthub.ai',             gen: 'Unknown',           s: 60 },
+    ];
+    for (const { pattern, gen, s } of aiHostMap) {
+      if (hostname.includes(pattern) || fullUrl.includes(pattern)) {
+        if (s > score) { score = s; generator = gen; }
+        flags.push(`Image sourced from known AI generation service (${gen})`);
+      }
+    }
+
+    // AI-related URL path patterns → moderate confidence
+    const aiUrlPatterns = [
+      { re: /midjourney/,                                   gen: 'Midjourney',       s: 40 },
+      { re: /dall[\-_]?e/,                                  gen: 'DALL-E',           s: 40 },
+      { re: /stable[\-_]?diffusion|sdxl|stablediffusion/,   gen: 'Stable Diffusion', s: 40 },
+      { re: /comfyui|automatic1111|a1111|invoke[\-_]?ai/,   gen: 'Stable Diffusion', s: 40 },
+      { re: /\/(ai[\-_]?gen|generated|aiart|aiimage|aiportrait)\//,  gen: 'Unknown', s: 35 },
+    ];
+    for (const { re, gen, s } of aiUrlPatterns) {
+      if (re.test(fullUrl)) {
+        if (s > score) { score = s; if (gen !== 'Unknown') generator = gen; }
+        flags.push(`AI-related URL pattern detected`);
+      }
+    }
+
+    // Filename heuristics
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|jpeg|webp)$/.test(filename)) {
+      if (score < 40) score = 40;
+      flags.push('UUID filename (common AI output pattern)');
+    }
+    if (/^\d{5}-\d+/.test(filename) || /^grid-\d/.test(filename)) {
+      if (score < 40) score = 40;
+      flags.push('Sequential/grid filename (common AI output pattern)');
+    }
+    if (/comfyui|automatic1111|invokeai|sd_xl|sdxl/.test(filename)) {
+      if (score < 45) score = 45;
+      flags.push('AI tool name in filename');
+    }
+
+    // Discord CDN — common for sharing AI images
+    if (/cdn\.discordapp|media\.discordapp/.test(imageUrl)) {
+      if (score < 20) score = 20;
+      flags.push('Discord CDN (common for AI image sharing)');
+    }
+  } catch {}
+  return { score, flags, generator };
+}
+
 // ── IMAGE SCAN — detects AI-generated images ─────────────────────
 app.post("/scan/image", async (req, res) => {
   const { imageUrl, imageBase64, mediaType } = req.body;
   let score = 0;
   const flags = [];
   let source = "rules";
+  let generator = "Unknown";
+  let vitConfidence = null;
 
   console.log("[ShieldAI] Image scan:", (imageUrl || "base64 data").slice(0, 80));
 
-  // ── STEP 1: Rule-based pre-checks ────────────────────────────────
-  if (imageUrl) {
-    try {
-      const hostname = new URL(imageUrl).hostname.toLowerCase();
-      // Known AI image generation services
-      const aiHosts = ["midjourney","dalle","openai","stability.ai","nightcafe",
-        "dreamstudio","runwayml","replicate","leonardo.ai","firefly.adobe","bing.com/images/create"];
-      if (aiHosts.some(h => hostname.includes(h) || imageUrl.includes(h))) {
-        score += 80;
-        flags.push("Image sourced from known AI generation service");
-      }
-      // Suspicious generic hosting (common for AI images)
-      if (/cdn\.discordapp|media\.discordapp/.test(imageUrl)) {
-        score += 20; flags.push("Discord CDN (common for AI image sharing)");
-      }
-    } catch {}
-  }
+  // ── STEP 1: Rule-based URL/filename heuristics ────────────────────
+  const urlHeuristics = scoreAiImageUrl(imageUrl);
+  score = Math.max(score, urlHeuristics.score);
+  flags.push(...urlHeuristics.flags);
+  if (urlHeuristics.generator !== 'Unknown') generator = urlHeuristics.generator;
 
   // ── STEP 2: Try to get image for local AI analysis ───────────────
   let imgBase64 = imageBase64 || null;
   let imgMediaType = mediaType || "image/jpeg";
 
-  // If URL provided but no base64, fetch the image
   if (!imgBase64 && imageUrl) {
     try {
       const fetched = await fetchImageAsBase64(imageUrl);
@@ -799,64 +857,93 @@ app.post("/scan/image", async (req, res) => {
     }
   }
 
-  // ── STEP 3: Local Image Classification ───────────────────────────
-  let aiResult = null;
+  // ── STEP 3: Local image + zero-shot classification ────────────────
   if (imgBase64) {
     try {
       source = "local-vision";
-      const classifier = await getImageClassifier();
+      // 3a. ViT image classifier — used for content metadata only
+      const imageClassifier = await getImageClassifier();
       const dataUrl = `data:${imgMediaType};base64,${imgBase64}`;
-      const classResult = await classifier(dataUrl, { topk: 3 });
+      const classResult = await imageClassifier(dataUrl, { topk: 3 });
       const topPrediction = classResult[0];
-      const topConfidence = Math.round(topPrediction.score * 100);
-      // Low classifier confidence on all classes may suggest synthetic/unusual content
-      const aiScore = topConfidence < 40 ? 35 : 10;
-      aiResult = {
-        ai_score: aiScore,
-        is_ai_generated: aiScore >= 50,
-        is_deepfake: false,
-        confidence: topConfidence > 70 ? "high" : topConfidence > 40 ? "medium" : "low",
-        artifacts: classResult.map(r => `${r.label} (${Math.round(r.score * 100)}%)`),
-        verdict: `Image content: ${topPrediction.label}`,
-        generator: "Unknown"
-      };
-      score = Math.max(score, aiResult.ai_score);
-      if (aiResult.is_ai_generated) flags.unshift("🤖 AI GENERATED IMAGE DETECTED");
-      if (aiResult.confidence) flags.push("Confidence: " + aiResult.confidence);
-      (aiResult.artifacts || []).forEach(a => flags.push("Classified: " + a));
+      vitConfidence = Math.round(topPrediction.score * 100);
+      classResult.forEach(r => flags.push(`Classified: ${r.label} (${Math.round(r.score * 100)}%)`));
+
+      // 3b. Zero-shot text classifier on combined image description
+      try {
+        const textClassifier = await getTextClassifier();
+        const filename = extractFilename(imageUrl);
+        const description = `Image classified as: ${classResult.map(r => r.label).join(', ')}. URL: ${imageUrl || 'uploaded'}. Filename: ${filename}`;
+        const zsResult = await textClassifier(description, [
+          'AI generated synthetic image',
+          'real photograph taken by camera',
+          'digital artwork or illustration',
+          'manipulated or edited photo'
+        ]);
+        const topLabel = zsResult.labels[0];
+        const topZsScore = Math.round(zsResult.scores[0] * 100);
+        flags.push(`Zero-shot: ${topLabel} (${topZsScore}%)`);
+        if (topLabel === 'AI generated synthetic image') {
+          score = Math.max(score, topZsScore);
+          if (generator === 'Unknown') generator = 'AI (zero-shot)';
+        } else if (topLabel === 'manipulated or edited photo') {
+          score = Math.max(score, Math.round(topZsScore * 0.6));
+        }
+      } catch (e) {
+        console.warn("[ShieldAI] Zero-shot classification error:", e.message);
+      }
+
+      // 3c. ViT low-confidence bonus — uncertain classifier + other signals
+      if (vitConfidence < 30 && score > 0) {
+        score = Math.min(100, score + 15);
+        flags.push("Low ViT confidence with other signals — boosting score");
+      }
+
+      if (score >= 50) flags.unshift("🤖 AI GENERATED IMAGE DETECTED");
     } catch (e) {
       console.warn("[ShieldAI] Local vision AI error:", e.message);
       flags.push("Vision AI unavailable: " + e.message);
     }
   } else {
-    // No image available — use URL-based text classification
+    // No image data — fall back to URL-only zero-shot text classification
     flags.push("Image could not be analyzed (URL-only scan)");
     try {
       if (imageUrl) {
         const classifier = await getTextClassifier();
-        const result = await classifier(
-          `Image URL: ${imageUrl}`,
-          ['AI generated image', 'real photograph', 'AI artwork', 'stock photo']
-        );
+        const filename = extractFilename(imageUrl);
+        const description = `Image URL: ${imageUrl}. Filename: ${filename}`;
+        const result = await classifier(description, [
+          'AI generated synthetic image',
+          'real photograph taken by camera',
+          'digital artwork or illustration',
+          'manipulated or edited photo'
+        ]);
         const topLabel = result.labels[0];
         const topScore = Math.round(result.scores[0] * 100);
-        if (topLabel !== 'real photograph' && topLabel !== 'stock photo') {
+        flags.push(`URL hint: ${topLabel} (${topScore}%)`);
+        if (topLabel === 'AI generated synthetic image') {
           score = Math.max(score, topScore);
-          flags.push(`URL hint: ${topLabel} (${topScore}%)`);
+          if (generator === 'Unknown') generator = 'AI (zero-shot)';
+        } else if (topLabel === 'manipulated or edited photo') {
+          score = Math.max(score, Math.round(topScore * 0.6));
         }
       }
     } catch {}
   }
 
+  const confidence = vitConfidence !== null
+    ? (vitConfidence > 70 ? "high" : vitConfidence > 40 ? "medium" : "low")
+    : (score > 70 ? "high" : score > 40 ? "medium" : "low");
+
   res.json({
     score: Math.min(score, 100),
     is_ai: score >= 50,
-    is_deepfake: aiResult?.is_deepfake || false,
-    confidence: aiResult?.confidence || "low",
-    generator: aiResult?.generator || "Unknown",
-    flags: flags,
-    verdict: aiResult?.verdict || (score >= 65 ? "Likely AI-generated" : score >= 35 ? "Possibly AI-generated" : "Likely real photo"),
-    source: source
+    is_deepfake: false,
+    confidence,
+    generator,
+    flags,
+    verdict: score >= 65 ? "Likely AI-generated" : score >= 35 ? "Possibly AI-generated" : "Likely real photo",
+    source
   });
 });
 
