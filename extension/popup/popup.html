@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>ShieldAI</title>
+<style>
+body { width: 380px; background: #050810; color: #e8eaf0; font-family: monospace; padding: 0; margin: 0; }
+.hdr { background: #0a0f1e; padding: 12px 16px; border-bottom: 1px solid #1a2540; display: flex; align-items: center; gap: 10px; }
+.logo { font-size: 18px; font-weight: bold; letter-spacing: 3px; color: #00d4ff; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #ff9f0a; margin-left: auto; }
+.section { padding: 10px 16px; border-bottom: 1px solid #1a2540; }
+.label { font-size: 9px; color: #5a6a8a; letter-spacing: 2px; margin-bottom: 6px; }
+input { width: 100%; background: #0f1628; border: 1px solid #1a2540; color: #e8eaf0; padding: 7px 10px; border-radius: 3px; font-family: monospace; font-size: 11px; box-sizing: border-box; outline: none; }
+input:focus { border-color: #00d4ff; }
+.btns { display: flex; gap: 6px; margin-top: 7px; }
+button { flex: 1; padding: 8px; background: #0f1628; border: 1px solid #1a2540; color: #00d4ff; cursor: pointer; font-family: monospace; font-size: 11px; border-radius: 3px; }
+button:hover { background: #1a2540; }
+button.primary { background: linear-gradient(135deg, #7b2fff, #00d4ff); color: white; border: none; font-size: 12px; font-weight: bold; letter-spacing: 1px; }
+.log { background: #020508; padding: 8px 12px; min-height: 120px; max-height: 160px; overflow-y: auto; font-size: 10px; line-height: 1.8; }
+.log div { padding: 1px 0; }
+.log .ok { color: #30d158; }
+.log .err { color: #ff2d55; }
+.log .info { color: #00d4ff; }
+.log .warn { color: #ff9f0a; }
+.score-box { padding: 12px 16px; display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #1a2540; }
+.score-num { font-size: 42px; font-weight: bold; color: #5a6a8a; min-width: 70px; text-align: center; }
+.score-info { flex: 1; }
+.score-label { font-size: 18px; font-weight: bold; color: #5a6a8a; }
+.score-url { font-size: 10px; color: #5a6a8a; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.score-verdict { font-size: 10px; color: #5a6a8a; margin-top: 3px; }
+.flags { font-size: 10px; color: #5a6a8a; margin-top: 4px; }
+.scan-section { padding: 12px 16px; }
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="logo">⚡ SHIELDAI</div>
+  <div class="dot" id="dot"></div>
+</div>
+
+<div class="section">
+  <div class="label">BACKEND URL</div>
+  <input id="urlInput" type="text" value="http://localhost:3000" placeholder="http://localhost:3000">
+  <div class="btns">
+    <button id="pingBtn">PING</button>
+    <button id="saveBtn">SAVE</button>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">LIVE LOG</div>
+  <div class="log" id="log">
+    <div class="info">Extension loaded. Press PING to test backend.</div>
+  </div>
+</div>
+
+<div class="score-box">
+  <div class="score-num" id="scoreNum">?</div>
+  <div class="score-info">
+    <div class="score-label" id="scoreLabel">NOT SCANNED</div>
+    <div class="score-url" id="scoreUrl">press scan button below</div>
+    <div class="score-verdict" id="scoreVerdict"></div>
+    <div class="flags" id="flagsDiv"></div>
+  </div>
+</div>
+
+<div class="scan-section">
+  <button class="primary" id="scanBtn" style="width:100%; padding: 12px; font-size: 14px;">▶ SCAN THIS PAGE</button>
+</div>
+
+<div style="padding: 8px 16px; border-top: 1px solid #1a2540; display: flex; gap: 6px; flex-wrap: wrap;">
+  <div style="background:#0a0f1e;border:1px solid #1a2540;border-radius:3px;padding:5px 10px;font-size:9px;font-family:monospace;color:#30d158;">🤖 AI IMAGE DETECT: ON</div>
+  <div style="background:#0a0f1e;border:1px solid #1a2540;border-radius:3px;padding:5px 10px;font-size:9px;font-family:monospace;color:#30d158;">🎣 PHISHING: ON</div>
+  <div style="background:#0a0f1e;border:1px solid #1a2540;border-radius:3px;padding:5px 10px;font-size:9px;font-family:monospace;color:#30d158;">⚓ PIRACY: ON</div>
+  <div style="background:#0a0f1e;border:1px solid #1a2540;border-radius:3px;padding:5px 10px;font-size:9px;font-family:monospace;color:#30d158;">📧 EMAIL: ON</div>
+  <div style="background:#0a0f1e;border:1px solid #1a2540;border-radius:3px;padding:5px 10px;font-size:9px;font-family:monospace;color:#30d158;">⬇️ DOWNLOADS: ON</div>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
