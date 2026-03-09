@@ -32,7 +32,7 @@ function getTextClassifier() {
 function getImageClassifier() {
   if (!_imageClassifierPromise) {
     _imageClassifierPromise = import('@xenova/transformers').then(({ pipeline }) =>
-      pipeline('image-classification', 'Xenova/vit-base-patch16-224')
+      pipeline('image-classification', 'Falconsai/AI-image-detector')
     );
   }
   return _imageClassifierPromise;
@@ -196,13 +196,6 @@ function setCachedScan(key, value) {
   }
   _scanCache.set(key, { ts: Date.now(), value });
 }
-
-// ================================================================
-// WEIGHTED SCORE CONSTANTS
-// ================================================================
-const WEIGHT_RULES_HIGH = 0.7;
-const WEIGHT_AI_THREAT = 0.6;
-const WEIGHT_GSB = 0.9;
 
 // ================================================================
 // URL REPUTATION ANALYSIS
@@ -555,7 +548,6 @@ app.post("/scan/website", async (req, res) => {
   // 1. Rules (instant)
   const piracy = rulesPiracy(url, title, bodyText);
   const phishing = rulesPhishing(url, title, bodyText);
-  const urlRep = analyzeUrlReputation(url);
 
   // 2. Safe Browsing (async)
   const sbResult = await checkSafeBrowsing(url);
@@ -594,28 +586,16 @@ app.post("/scan/website", async (req, res) => {
     console.warn("[ShieldAI] Local AI error:", e.message);
   }
 
-  // Weighted score merging
-  const combinedRulesScore = Math.max(phishing.score, urlRep.score);
-  const finalPhishing = Math.min(100, Math.max(
-    combinedRulesScore * WEIGHT_RULES_HIGH,
-    sbScore * WEIGHT_GSB,
-    (aiResult?.phishing || 0) * WEIGHT_AI_THREAT
-  ));
-  const finalPiracy = Math.min(100, Math.max(
-    piracy.score * WEIGHT_RULES_HIGH,
-    (aiResult?.piracy || 0) * WEIGHT_AI_THREAT
-  ));
-  const finalMalware = Math.min(100, Math.max(
-    (aiResult?.malware || 0) * WEIGHT_AI_THREAT,
-    sbResult.flagged ? 80 * WEIGHT_GSB : 0
-  ));
-  const finalScam = Math.min(100, (aiResult?.scam || 0) * WEIGHT_AI_THREAT);
+  // Restore raw score merging (no weight multipliers)
+  const finalPhishing = Math.max(phishing.score, sbScore, aiResult?.phishing || 0);
+  const finalPiracy = Math.max(piracy.score, aiResult?.piracy || 0);
+  const finalMalware = Math.max(aiResult?.malware || 0, sbResult.flagged ? 80 : 0);
+  const finalScam = aiResult?.scam || 0;
   const finalScore = Math.max(finalPhishing, finalPiracy, finalMalware, finalScam);
 
   const allFlags = [
     ...phishing.flags,
     ...piracy.flags,
-    ...urlRep.flags,
     ...(aiResult?.flags || []).map(f => "🤖 " + f)
   ];
   if (aiResult?.verdict) allFlags.unshift("AI: " + aiResult.verdict);
@@ -624,7 +604,7 @@ app.post("/scan/website", async (req, res) => {
 
   // Confidence based on distinct detection source count (threshold >= 30 for meaningful signal)
   const sourceCount = [
-    phishing.score >= 30 || piracy.score >= 30 || urlRep.score >= 30,
+    phishing.score >= 30 || piracy.score >= 30,
     sbResult.flagged,
     !!aiResult && !aiResult.safe
   ].filter(Boolean).length;
@@ -799,34 +779,51 @@ app.post("/scan/image", async (req, res) => {
     }
   }
 
-  // ── STEP 3: Local Image Classification ───────────────────────────
+  // ── STEP 3: AI Image Detection using Falconsai/AI-image-detector ──
   let aiResult = null;
   if (imgBase64) {
     try {
-      source = "local-vision";
+      source = "local-ai-detector";
       const classifier = await getImageClassifier();
       const dataUrl = `data:${imgMediaType};base64,${imgBase64}`;
-      const classResult = await classifier(dataUrl, { topk: 3 });
-      const topPrediction = classResult[0];
-      const topConfidence = Math.round(topPrediction.score * 100);
-      // Low classifier confidence on all classes may suggest synthetic/unusual content
-      const aiScore = topConfidence < 40 ? 35 : 10;
+      const classResult = await classifier(dataUrl);
+
+      // Falconsai/AI-image-detector outputs labels: "ai_generated" and "real"
+      let aiGenScore = 0;
+      let realScore = 0;
+      for (const r of classResult) {
+        if (r.label === 'ai_generated' || r.label === 'artificial' || r.label.toLowerCase().includes('ai')) {
+          aiGenScore = Math.round(r.score * 100);
+        } else if (r.label === 'real' || r.label === 'human' || r.label.toLowerCase().includes('real')) {
+          realScore = Math.round(r.score * 100);
+        }
+      }
+
+      // Use the AI-generated score directly
+      score = Math.max(score, aiGenScore);
+      const isAiGenerated = aiGenScore >= 50;
+      const confidence = aiGenScore >= 80 ? "high" : aiGenScore >= 50 ? "medium" : "low";
+
       aiResult = {
-        ai_score: aiScore,
-        is_ai_generated: aiScore >= 50,
-        is_deepfake: false,
-        confidence: topConfidence > 70 ? "high" : topConfidence > 40 ? "medium" : "low",
+        ai_score: aiGenScore,
+        is_ai_generated: isAiGenerated,
+        is_deepfake: aiGenScore >= 85,  // Very high AI score suggests possible deepfake
+        confidence: confidence,
         artifacts: classResult.map(r => `${r.label} (${Math.round(r.score * 100)}%)`),
-        verdict: `Image content: ${topPrediction.label}`,
+        verdict: isAiGenerated
+          ? `AI-generated image detected (${aiGenScore}% confidence)`
+          : `Likely real photograph (${realScore}% confidence)`,
         generator: "Unknown"
       };
+
       score = Math.max(score, aiResult.ai_score);
       if (aiResult.is_ai_generated) flags.unshift("🤖 AI GENERATED IMAGE DETECTED");
-      if (aiResult.confidence) flags.push("Confidence: " + aiResult.confidence);
-      (aiResult.artifacts || []).forEach(a => flags.push("Classified: " + a));
+      if (aiResult.is_deepfake) { score = Math.max(score, 85); flags.unshift("⚠️ POSSIBLE DEEPFAKE DETECTED"); }
+      if (aiResult.confidence) flags.push("AI Detection Confidence: " + aiResult.confidence);
+      (aiResult.artifacts || []).forEach(a => flags.push("Detection: " + a));
     } catch (e) {
-      console.warn("[ShieldAI] Local vision AI error:", e.message);
-      flags.push("Vision AI unavailable: " + e.message);
+      console.warn("[ShieldAI] AI image detection error:", e.message);
+      flags.push("AI image detection unavailable: " + e.message);
     }
   } else {
     // No image available — use URL-based text classification
@@ -887,6 +884,7 @@ app.post("/scan/download", async (req, res) => {
 
 app.listen(PORT, async () => {
   console.log(`✅ ShieldAI backend running on port ${PORT}`);
+  console.log("   AI Models: Xenova/mobilebert-uncased-mnli (text) + Falconsai/AI-image-detector (vision)");
   console.log(`   GSB key:    ${GOOGLE_SAFE_BROWSING_KEY !== "YOUR_GOOGLE_SAFE_BROWSING_KEY" ? "✓ configured" : "✗ not set (optional)"}`);
   console.log(`   VT key:     ${VIRUSTOTAL_KEY !== "YOUR_VIRUSTOTAL_KEY" ? "✓ configured" : "✗ not set (optional)"}`);
 
