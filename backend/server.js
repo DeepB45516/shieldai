@@ -77,7 +77,17 @@ const PIRACY_DOMAINS = [
   "123movies","fmovie","moviesjoy","lookmovie","solarmovie","hdmovie2",
   "streameast","crackstreams","buffstreams","sportsurge","methstreams",
   "torrentgalaxy","limetorrents","zooqle","skytorrents","magnetdl","bitsearch",
-  "yggtorrent","cpasbien","torrent9","fztvseries","o2tvseries","extratorrents"
+  "yggtorrent","cpasbien","torrent9","fztvseries","o2tvseries","extratorrents",
+  // Expanded list (50+ new domains)
+  "flixhq","hdtoday","myflixer","bflixz","dopebox","kissasian","dramacool",
+  "gogoanime","9anime","animepahe","zoro.to","aniwave","animesuge.to",
+  "watchserieshd","primewire","0123movie","ymovies","afdah","vumoo",
+  "novafile","rapidgator","uploaded","turbobit","nitroflare","ddownload",
+  "apkmody","happymod","apkmirror-mod","luckypatcher",
+  "z-lib","annas-archive","trantor","mobilism","audiobookbay",
+  "y2mate","savefrom","clipconverter","mp3juices","flvto",
+  "desiremovies","katmoviehd","extramovies","ssrmovies","cinemavilla",
+  "1tamilmv","tamilblasters","dvdplay","uwatchfree","5movierulz"
 ];
 
 const PIRACY_KEYWORDS = [
@@ -87,14 +97,29 @@ const PIRACY_KEYWORDS = [
   "keygen download", "license key free", "activation key free",
   "nulled script", "warez download", "pirated game", "free premium account",
   "cracked apk", "mod apk unlimited", "bypass premium", "scene release",
-  "cracked by", "repack by", "fitted by", "compressed by"
+  "cracked by", "repack by", "fitted by", "compressed by",
+  // Expanded keywords (20+ new)
+  "watch free online", "stream free", "download free movie", "free streaming",
+  "crack download", "patch download", "full version free", "premium free download",
+  "pirated copy", "bootleg", "cam quality", "dvdscr", "hdts", "webrip", "brrip",
+  "no subscription needed", "bypass paywall", "free premium access",
+  "torrent download", "direct download link", "ddl", "mega link", "mediafire link"
 ];
 
 const PHISHING_BRANDS = [
   "paypal","apple","google","microsoft","amazon","netflix","facebook",
   "instagram","twitter","linkedin","dropbox","adobe","chase","wellsfargo",
   "bankofamerica","citibank","barclays","hsbc","santander","sbi","hdfc","icici",
-  "binance","coinbase","metamask","upwork","fiverr"
+  "binance","coinbase","metamask","upwork","fiverr",
+  // Expanded brands (30+ new)
+  "dhl","fedex","ups","usps","royalmail","stripe","square","venmo",
+  "zelle","cashapp","wise","revolut","robinhood","etrade","fidelity",
+  "steam","epicgames","roblox","discord","telegram","whatsapp","signal",
+  "uber","lyft","airbnb","booking","expedia",
+  "walmart","target","bestbuy","costco","ebay","alibaba","aliexpress",
+  "icloud","outlook","protonmail","zoho",
+  "github","gitlab","bitbucket","heroku","vercel","netlify",
+  "aws","azure","gcp","digitalocean","cloudflare"
 ];
 
 const MALCODE_PATTERNS = [
@@ -113,8 +138,107 @@ const MALCODE_PATTERNS = [
   { re: /keyup|keydown.{0,100}(fetch|XMLHttpRequest)/, label: "Keylogger pattern" },
   { re: /WebAssembly\.instantiate.{0,200}fetch/, label: "WASM payload loader" },
   { re: /atob\(atob\(/, label: "Double base64 encoding (deep obfuscation)" },
-  { re: /\\u00[0-9a-f]{2}(\\u00[0-9a-f]{2}){10,}/i, label: "Unicode escape obfuscation" }
+  { re: /\\u00[0-9a-f]{2}(\\u00[0-9a-f]{2}){10,}/i, label: "Unicode escape obfuscation" },
+  // 15+ new patterns
+  { re: /document\.cookie\s*=.*;\s*path/i, label: "Cookie manipulation" },
+  { re: /localStorage\.(getItem|setItem)\s*\(.{0,60}(password|token|credential)/i, label: "localStorage credential theft" },
+  { re: /addEventListener\s*\(\s*['"]key(up|down|press)['"]/i, label: "Keystroke capture listener" },
+  { re: /<iframe[^>]+style\s*=\s*['"][^'"]*(?:display\s*:\s*none|visibility\s*:\s*hidden|width\s*:\s*0|height\s*:\s*0)/i, label: "Hidden iframe" },
+  { re: /new\s+WebSocket\s*\(\s*['"]wss?:\/\/(?!localhost)/i, label: "WebSocket C2 channel" },
+  { re: /navigator\.clipboard\.(read|writeText)/i, label: "Clipboard theft" },
+  { re: /window\.showOpenFilePicker|window\.showSaveFilePicker|FileSystemAccess/i, label: "Filesystem access API" },
+  { re: /document\.execCommand\s*\(\s*['"]copy['"]\)/i, label: "Programmatic clipboard copy" },
+  { re: /XMLHttpRequest.{0,200}\.send\(.{0,100}(password|credential|token)/i, label: "XHR credential exfiltration" },
+  { re: /setTimeout\s*\(\s*['"][^'"]{200,}['"]/i, label: "String-based setTimeout (deferred eval)" },
+  { re: /setInterval\s*\(\s*['"][^'"]{200,}['"]/i, label: "String-based setInterval (deferred eval)" },
+  { re: /import\s*\(\s*['"]data:/i, label: "Data URI dynamic import" },
+  { re: /Function\.prototype\.constructor\s*\(/i, label: "Indirect Function constructor" },
+  { re: /\bprocess\s*\[\s*['"]binding['"]\s*\]/i, label: "Node.js process binding access" },
+  { re: /require\s*\(\s*['"]child_process['"]\s*\)/i, label: "child_process require" }
 ];
+
+// ================================================================
+// PRE-COMPILED REGEX PATTERNS (performance)
+// ================================================================
+const RE_TYPOSQUAT = /paypa1|pay-pal|paypai|arnazon|amaz0n|g00gle|microsofl|appl3|app1e|faceb00k|1nstagram|g0ogle|c1tibank|wellsfarg0/;
+const RE_TORRENT_FORMAT = /\b(bluray|blu-ray|bdrip|dvdrip|hdtv|webrip|brrip|hdts|dvdscr|cam\b|x264|x265|hevc|avc|xvid|divx|h\.?264|h\.?265)\b/i;
+const RE_TV_EPISODE = /\bS\d{2}E\d{2}\b|\bseason\s+\d+\s+episode\s+\d+\b/i;
+const RE_DOUBLE_EXT = /\.(pdf|doc|docx|txt|jpg|png)\.(exe|bat|cmd|ps1|vbs|scr|jar)$/i;
+const RE_BASE64_PARAM = /[?&][^=]+=([A-Za-z0-9+/]{40,}={0,2})(&|$)/;
+const RE_REDIRECT_CHAIN = /[?&](redirect|return|next|url|goto|target|dest|destination)\s*=\s*https?:\/\//i;
+const RE_DGA_DOMAIN = /^[a-z]{8,15}\.(xyz|top|tk|ml|ga|cf|gq|pw)$/;
+const RE_BRAND_SUBDOMAIN = /^(paypal|apple|google|microsoft|amazon|netflix|facebook|instagram|twitter|linkedin|dropbox|adobe|chase|wellsfargo|bankofamerica|citibank|barclays|hsbc|stripe|steam|discord|github)\.[a-z0-9-]+\.[a-z]{2,}$/;
+const RE_OBFUS_VARS = /\b_0x[0-9a-f]{4,}\b/i;
+const RE_HEAVY_CONCAT = /(['"][^'"]{0,30}['"]\s*\+\s*){20,}/;
+
+// ================================================================
+// LRU SCAN RESULT CACHE (5-minute TTL, 1000-entry max)
+// ================================================================
+const SCAN_CACHE_TTL_MS = 5 * 60 * 1000;
+const SCAN_CACHE_MAX = 1000;
+const _scanCache = new Map();
+
+function getCachedScan(key) {
+  const entry = _scanCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > SCAN_CACHE_TTL_MS) { _scanCache.delete(key); return null; }
+  // Refresh insertion order for LRU
+  _scanCache.delete(key);
+  _scanCache.set(key, entry);
+  return entry.value;
+}
+
+function setCachedScan(key, value) {
+  if (_scanCache.has(key)) _scanCache.delete(key);
+  else if (_scanCache.size >= SCAN_CACHE_MAX) {
+    // Evict oldest entry (first inserted)
+    _scanCache.delete(_scanCache.keys().next().value);
+  }
+  _scanCache.set(key, { ts: Date.now(), value });
+}
+
+// ================================================================
+// WEIGHTED SCORE CONSTANTS
+// ================================================================
+const WEIGHT_RULES_HIGH = 0.7;
+const WEIGHT_AI_THREAT = 0.6;
+const WEIGHT_GSB = 0.9;
+
+// ================================================================
+// URL REPUTATION ANALYSIS
+// ================================================================
+function analyzeUrlReputation(url) {
+  const flags = [];
+  let score = 0;
+  try {
+    const u = new URL(url);
+    const hostname = u.hostname.toLowerCase().replace(/^www\./, "");
+    const fullUrl = url;
+
+    // Double extension (.pdf.exe etc.)
+    if (RE_DOUBLE_EXT.test(u.pathname)) {
+      score += 70; flags.push("Double extension (masquerading file)");
+    }
+    // Base64 in URL params
+    if (RE_BASE64_PARAM.test(fullUrl)) {
+      score += 30; flags.push("Base64-encoded URL parameter");
+    }
+    // Redirect chain
+    if (RE_REDIRECT_CHAIN.test(fullUrl)) {
+      score += 35; flags.push("Open redirect chain detected");
+    }
+    // Auto-generated / DGA domain
+    if (RE_DGA_DOMAIN.test(hostname)) {
+      score += 40; flags.push("Likely auto-generated (DGA) domain");
+    }
+    // Brand in subdomain (brand.attacker.com pattern)
+    if (RE_BRAND_SUBDOMAIN.test(hostname)) {
+      score += 55; flags.push("Brand name used as subdomain");
+    }
+  } catch {}
+  return { score: Math.min(score, 100), flags };
+}
+
 
 function calcEntropy(str) {
   const freq = {};
@@ -150,6 +274,18 @@ function rulesPiracy(url, title, bodyText) {
     score += 50; flags.push("Torrent/magnet links on page");
   }
 
+  // Content structure detection
+  if (RE_TORRENT_FORMAT.test(combined)) {
+    score += 30; flags.push("Torrent release format tag detected");
+  }
+  if (RE_TV_EPISODE.test(combined)) {
+    score += 20; flags.push("TV episode download pattern detected");
+  }
+  const dlLinkCount = (combined.match(/https?:\/\/[^\s"'<>]+\.(torrent|zip|rar|mkv|mp4|avi)/gi) || []).length;
+  if (dlLinkCount >= 5) {
+    score += 25; flags.push(`Excessive download links (${dlLinkCount})`);
+  }
+
   return { score: Math.min(score, 100), flags };
 }
 
@@ -166,7 +302,7 @@ function rulesPhishing(url, title, bodyText) {
     if (/\.(xyz|top|click|loan|work|gq|tk|ml|cf|ga|pw|cc)$/.test(domain)) { score += 25; flags.push("High-risk TLD"); }
     if (/[аеіоурсАЕІОУРС]/.test(domain)) { score += 65; flags.push("Homograph/unicode attack in domain"); }
     if (domain.split(".").length > 5) { score += 20; flags.push("Excessive subdomains"); }
-    if (/paypa1|pay-pal|paypai|arnazon|amaz0n|g00gle|microsofl|appl3|app1e/.test(domain)) {
+    if (RE_TYPOSQUAT.test(domain)) {
       score += 70; flags.push("Typosquatting detected");
     }
     for (const brand of PHISHING_BRANDS) {
@@ -187,12 +323,34 @@ function rulesPhishing(url, title, bodyText) {
     if (/login|signin|account|verify|secure|update|confirm|auth/.test(u.pathname)) {
       score += 15; flags.push("Suspicious path: " + u.pathname.slice(0,30));
     }
+    // Data URI phishing page
+    if (url.startsWith("data:text/html")) {
+      score += 80; flags.push("Data URI phishing page");
+    }
+    // Long URL
+    if (url.length > 500) {
+      score += 15; flags.push("Excessively long URL (" + url.length + " chars)");
+    }
+    // @ in URL host (credential obfuscation)
+    if (u.username || u.password) {
+      score += 60; flags.push("@ symbol in URL (credential obfuscation)");
+    }
+    // Punycode / IDN domain
+    if (domain.startsWith("xn--") || domain.includes(".xn--")) {
+      score += 45; flags.push("Punycode/IDN domain (possible homograph)");
+    }
   } catch {}
 
   const urgency = [
     "your account has been suspended","verify your account","confirm your identity",
     "unusual activity","act now","account will be closed","update your payment",
-    "verify immediately","click here to verify","your account is at risk"
+    "verify immediately","click here to verify","your account is at risk",
+    // 15+ new urgency phrases
+    "we noticed suspicious activity","unauthorized access attempt","your password has been compromised",
+    "immediate action required","your account will be permanently deleted","verify your billing information",
+    "you have been selected","congratulations you won","click below to claim",
+    "your package is waiting","delivery attempt failed","reschedule your delivery",
+    "your subscription will expire","payment method declined","update billing now"
   ];
   for (const phrase of urgency) {
     if (combined.includes(phrase)) { score += 20; flags.push(`Urgency: "${phrase}"`); }
@@ -225,6 +383,20 @@ function rulesMalcode(code, filename) {
       else if (ent > 5.3) { score += 12; flags.push("Elevated entropy (" + ent.toFixed(2) + ")"); }
     }
     if (/[A-Za-z0-9+/]{300,}={0,2}/.test(code)) { score += 20; flags.push("Large base64 blob"); }
+
+    // Multi-layer obfuscation detection
+    if (RE_HEAVY_CONCAT.test(code)) {
+      score += 30; flags.push("Heavy string concatenation (possible obfuscation)");
+    }
+    if (RE_OBFUS_VARS.test(code)) {
+      score += 25; flags.push("Obfuscated variable names (_0x... pattern)");
+    }
+    if (/\bdebugger\b/.test(code)) {
+      score += 20; flags.push("Anti-debugging (debugger statement)");
+    }
+    if (/console\s*=\s*\{|console\.(log|warn|error)\s*=\s*function/.test(code)) {
+      score += 20; flags.push("Console hijacking detected");
+    }
   }
 
   return { score: Math.min(score, 100), flags };
@@ -248,6 +420,13 @@ function rulesEmail(subject, sender, body) {
         /(bank|support|security|noreply|admin|paypal|amazon|apple)/i.test(sender)) {
       score += 40; flags.push("Business impersonation via free email");
     }
+
+    // Mismatched Reply-To domain
+    const replyToMatch = combined.match(/reply-to:\s*\S+@(\S+)/i);
+    const senderDomainMatch = sender.match(/@([^>]+)/);
+    if (replyToMatch && senderDomainMatch && replyToMatch[1].toLowerCase() !== senderDomainMatch[1].toLowerCase()) {
+      score += 35; flags.push("Mismatched Reply-To domain");
+    }
   }
 
   const urgentWords = [
@@ -265,6 +444,27 @@ function rulesEmail(subject, sender, body) {
     if (/bit\.ly|tinyurl|shorturl|ow\.ly|t\.co\/[a-z0-9]{6}/i.test(body)) { score += 20; flags.push("Shortened/obfuscated URLs"); }
     const linkCount = (body.match(/https?:\/\//gi) || []).length;
     if (linkCount > 6) { score += 10; flags.push(linkCount + " links in email"); }
+
+    // Fake attachment + link pattern
+    if (/(see attached|see the attached|attached file)/i.test(body) && /click here/i.test(body)) {
+      score += 30; flags.push("Fake attachment with click-here link");
+    }
+    // Phishing grammar markers
+    if (/dear customer|dear valued|kindly click|do the needful/i.test(body)) {
+      score += 25; flags.push("Phishing grammar marker detected");
+    }
+    // Executable extension mentions
+    if (/\.(exe|ps1|vbs|bat|cmd|scr)\b/i.test(body)) {
+      score += 30; flags.push("Executable file extension mentioned in email");
+    }
+    // Cryptocurrency / wire transfer requests
+    if (/bitcoin|wire transfer|western union|moneygram|gift card|itunes card/i.test(body)) {
+      score += 35; flags.push("Cryptocurrency or wire transfer request");
+    }
+    // BEC (Business Email Compromise) pattern
+    if (/(ceo|chief executive|president|director).{0,100}(urgent|confidential).{0,100}(wire|transfer|payment)/i.test(body)) {
+      score += 45; flags.push("BEC pattern: executive + urgent + payment");
+    }
   }
 
   return { score: Math.min(score, 100), flags };
@@ -347,9 +547,15 @@ app.post("/scan/website", async (req, res) => {
 
   console.log("[ShieldAI] Website scan:", url.slice(0, 80));
 
+  // Check cache first
+  const cacheKey = `website:${url}`;
+  const cached = getCachedScan(cacheKey);
+  if (cached) return res.json(cached);
+
   // 1. Rules (instant)
   const piracy = rulesPiracy(url, title, bodyText);
   const phishing = rulesPhishing(url, title, bodyText);
+  const urlRep = analyzeUrlReputation(url);
 
   // 2. Safe Browsing (async)
   const sbResult = await checkSafeBrowsing(url);
@@ -360,57 +566,88 @@ app.post("/scan/website", async (req, res) => {
     sbResult.threats.forEach(t => phishing.flags.push("Google Safe Browsing: " + t));
   }
 
-  // 3. Local AI Classification
+  // 3. Local AI Classification (improved prompt engineering)
   let aiResult = null;
   try {
     const classifier = await getTextClassifier();
-    const textToAnalyze = `URL: ${url} Title: ${title || ''} Content: ${(bodyText || '').slice(0, 500)}`;
-    const result = await classifier(textToAnalyze, ['phishing', 'piracy', 'malware', 'scam', 'safe']);
+    const textToAnalyze = `Analyze this web page for threats. URL: ${url} Page title: ${title || 'unknown'} Content snippet: ${(bodyText || '').slice(0, 600)}`;
+    const result = await classifier(textToAnalyze, [
+      'phishing credential theft',
+      'piracy copyright infringement',
+      'malware distribution',
+      'scam fraud deception',
+      'legitimate safe content'
+    ]);
     const labelMap = {};
     result.labels.forEach((label, i) => { labelMap[label] = Math.round(result.scores[i] * 100); });
     const topLabel = result.labels[0];
     aiResult = {
-      phishing: labelMap['phishing'] || 0,
-      piracy: labelMap['piracy'] || 0,
-      malware: labelMap['malware'] || 0,
-      scam: labelMap['scam'] || 0,
+      phishing: labelMap['phishing credential theft'] || 0,
+      piracy: labelMap['piracy copyright infringement'] || 0,
+      malware: labelMap['malware distribution'] || 0,
+      scam: labelMap['scam fraud deception'] || 0,
       flags: [],
-      verdict: topLabel !== 'safe' ? `AI detected possible ${topLabel}` : 'Content appears safe',
-      safe: topLabel === 'safe'
+      verdict: topLabel !== 'legitimate safe content' ? `AI detected possible ${topLabel}` : 'Content appears safe',
+      safe: topLabel === 'legitimate safe content'
     };
   } catch (e) {
     console.warn("[ShieldAI] Local AI error:", e.message);
   }
 
-  // Merge results
-  const finalPhishing = Math.max(phishing.score, sbScore, aiResult?.phishing || 0);
-  const finalPiracy = Math.max(piracy.score, aiResult?.piracy || 0);
-  const finalMalware = Math.max(aiResult?.malware || 0, sbResult.flagged ? 80 : 0);
-  const finalScore = Math.max(finalPhishing, finalPiracy, finalMalware, aiResult?.scam || 0);
+  // Weighted score merging
+  const combinedRulesScore = Math.max(phishing.score, urlRep.score);
+  const finalPhishing = Math.min(100, Math.max(
+    combinedRulesScore * WEIGHT_RULES_HIGH,
+    sbScore * WEIGHT_GSB,
+    (aiResult?.phishing || 0) * WEIGHT_AI_THREAT
+  ));
+  const finalPiracy = Math.min(100, Math.max(
+    piracy.score * WEIGHT_RULES_HIGH,
+    (aiResult?.piracy || 0) * WEIGHT_AI_THREAT
+  ));
+  const finalMalware = Math.min(100, Math.max(
+    (aiResult?.malware || 0) * WEIGHT_AI_THREAT,
+    sbResult.flagged ? 80 * WEIGHT_GSB : 0
+  ));
+  const finalScam = Math.min(100, (aiResult?.scam || 0) * WEIGHT_AI_THREAT);
+  const finalScore = Math.max(finalPhishing, finalPiracy, finalMalware, finalScam);
 
   const allFlags = [
     ...phishing.flags,
     ...piracy.flags,
+    ...urlRep.flags,
     ...(aiResult?.flags || []).map(f => "🤖 " + f)
   ];
   if (aiResult?.verdict) allFlags.unshift("AI: " + aiResult.verdict);
 
   const threatType = finalPiracy > finalPhishing ? "piracy" : "phishing";
 
-  res.json({
-    score: Math.min(finalScore, 100),
-    phishingScore: Math.min(finalPhishing, 100),
-    piracyScore: Math.min(finalPiracy, 100),
-    malwareScore: Math.min(finalMalware, 100),
+  // Confidence based on distinct detection source count (threshold >= 30 for meaningful signal)
+  const sourceCount = [
+    phishing.score >= 30 || piracy.score >= 30 || urlRep.score >= 30,
+    sbResult.flagged,
+    !!aiResult && !aiResult.safe
+  ].filter(Boolean).length;
+  const confidence = sourceCount >= 2 ? "high" : sourceCount === 1 ? "medium" : "low";
+
+  const result = {
+    score: Math.min(Math.round(finalScore), 100),
+    phishingScore: Math.min(Math.round(finalPhishing), 100),
+    piracyScore: Math.min(Math.round(finalPiracy), 100),
+    malwareScore: Math.min(Math.round(finalMalware), 100),
     flags: allFlags,
     threatType: finalScore >= 50 ? threatType : "safe",
     verdict: aiResult?.verdict || (finalScore >= 65 ? "Threat detected" : "Clean"),
+    confidence,
     sources: {
       rules: true,
       safeBrowsing: !sbResult.error,
       ai: !!aiResult
     }
-  });
+  };
+
+  setCachedScan(cacheKey, result);
+  res.json(result);
 });
 
 // ── EMAIL SCAN ────────────────────────────────────────────────────
@@ -423,11 +660,16 @@ app.post("/scan/email", async (req, res) => {
   let aiResult = null;
   try {
     const classifier = await getTextClassifier();
-    const emailText = `Subject: ${subject || ''} From: ${sender || ''} Body: ${(body || '').slice(0, 500)}`;
-    const result = await classifier(emailText, ['phishing email', 'scam email', 'spam email', 'legitimate email']);
+    const emailText = `Classify this email for threats. Subject: ${subject || ''} From: ${sender || ''} Body: ${(body || '').slice(0, 600)}`;
+    const result = await classifier(emailText, [
+      'phishing email credential theft',
+      'scam fraud email',
+      'spam unsolicited email',
+      'legitimate genuine email'
+    ]);
     const topLabel = result.labels[0];
     const topScore = Math.round(result.scores[0] * 100);
-    const isThreat = topLabel !== 'legitimate email';
+    const isThreat = topLabel !== 'legitimate genuine email';
     aiResult = {
       phishing_score: isThreat ? topScore : 0,
       is_phishing: isThreat && topScore >= 50,
@@ -445,11 +687,18 @@ app.post("/scan/email", async (req, res) => {
   ];
   if (aiResult?.verdict) finalFlags.unshift("AI: " + aiResult.verdict);
 
+  const sourceCount = [
+    rules.score >= 30,
+    !!aiResult?.is_phishing
+  ].filter(Boolean).length;
+  const confidence = sourceCount >= 2 ? "high" : sourceCount === 1 ? "medium" : "low";
+
   res.json({
     score: Math.min(finalScore, 100),
     threat: finalScore >= 50,
     flags: finalFlags,
-    verdict: aiResult?.verdict || (finalScore >= 50 ? "Phishing detected" : "Clean")
+    verdict: aiResult?.verdict || (finalScore >= 50 ? "Phishing detected" : "Clean"),
+    confidence
   });
 });
 
@@ -463,11 +712,17 @@ app.post("/scan/code", async (req, res) => {
   let aiResult = null;
   try {
     const classifier = await getTextClassifier();
-    const codeText = `Filename: ${filename || ''} Code: ${(code || '').slice(0, 500)}`;
-    const result = await classifier(codeText, ['malicious code', 'obfuscated code', 'keylogger', 'cryptominer', 'safe code']);
+    const codeText = `Analyze this code for malicious behavior. Filename: ${filename || 'unknown'} Code snippet: ${(code || '').slice(0, 600)}`;
+    const result = await classifier(codeText, [
+      'malicious code attack payload',
+      'obfuscated code hiding intent',
+      'keylogger credential stealer',
+      'cryptominer resource hijacker',
+      'safe benign code'
+    ]);
     const topLabel = result.labels[0];
     const topScore = Math.round(result.scores[0] * 100);
-    const isMalicious = topLabel !== 'safe code';
+    const isMalicious = topLabel !== 'safe benign code';
     aiResult = {
       malicious: isMalicious && topScore >= 50,
       severity: isMalicious ? topScore : 0,
@@ -485,11 +740,18 @@ app.post("/scan/code", async (req, res) => {
   ];
   if (aiResult?.verdict) finalFlags.unshift("AI: " + aiResult.verdict);
 
+  const sourceCount = [
+    rules.score >= 30,
+    !!aiResult?.malicious
+  ].filter(Boolean).length;
+  const confidence = sourceCount >= 2 ? "high" : sourceCount === 1 ? "medium" : "low";
+
   res.json({
     score: Math.min(finalScore, 100),
     threat: finalScore >= 50,
     flags: finalFlags,
-    verdict: aiResult?.verdict || (finalScore >= 50 ? "Malicious code detected" : "Clean")
+    verdict: aiResult?.verdict || (finalScore >= 50 ? "Malicious code detected" : "Clean"),
+    confidence
   });
 });
 
