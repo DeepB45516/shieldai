@@ -3,7 +3,6 @@
 // Or run locally: node server.js
 require("dotenv").config();
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const express = require("express");
 const fetch = require("node-fetch");
 const cors = require("cors");
@@ -17,69 +16,26 @@ const GOOGLE_SAFE_BROWSING_KEY = process.env.GSB_KEY || "YOUR_GOOGLE_SAFE_BROWSI
 const VIRUSTOTAL_KEY = process.env.VT_KEY || "YOUR_VIRUSTOTAL_KEY";
 const PORT = process.env.PORT || 3000;
 
-// ── OPENROUTER TEXT (Phishing detection) ─────────────────
-async function callAIText(prompt) {
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "http://localhost:3000",
-      "X-Title": "ShieldAI"
-    },
-    body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 400
-    })
-  });
+// ── LOCAL AI MODELS (zero API key, zero cost) ─────────────────────
+let _textClassifierPromise = null;
+let _imageClassifierPromise = null;
 
-  const data = await res.json();
-
-  if (!res.ok) {
-    console.error("OpenRouter Text Error:", data);
-    throw new Error(data?.error?.message || "AI text error");
+function getTextClassifier() {
+  if (!_textClassifierPromise) {
+    _textClassifierPromise = import('@xenova/transformers').then(({ pipeline }) =>
+      pipeline('zero-shot-classification', 'Xenova/mobilebert-uncased-mnli')
+    );
   }
-
-  return data.choices[0].message.content;
+  return _textClassifierPromise;
 }
-// ── OPENROUTER VISION (FREE) ─────────────────────────────
-async function callOpenRouterVision(imageUrl, prompt) {
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "http://localhost:3000",
-      "X-Title": "ShieldAI"
-    },
-    
-    body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: prompt },
-            {
-              type: "image_url",
-              image_url: { url: imageUrl }
-            }
-          ]
-        }
-      ],
-      max_tokens: 500
-    })
-  });
 
-  const data = await res.json();
-
-  if (!res.ok) {
-    console.error("OpenRouter error:", data);
-    throw new Error(data?.error?.message || "OpenRouter Vision error");
+function getImageClassifier() {
+  if (!_imageClassifierPromise) {
+    _imageClassifierPromise = import('@xenova/transformers').then(({ pipeline }) =>
+      pipeline('image-classification', 'Xenova/vit-base-patch16-224')
+    );
   }
-
-  return data.choices[0].message.content;
+  return _imageClassifierPromise;
 }
 
 // ── FETCH IMAGE AS BASE64 ─────────────────────────────────────────
@@ -404,23 +360,26 @@ app.post("/scan/website", async (req, res) => {
     sbResult.threats.forEach(t => phishing.flags.push("Google Safe Browsing: " + t));
   }
 
-  // 3. OpenRouter AI (async)
+  // 3. Local AI Classification
   let aiResult = null;
   try {
-    const aiText = await callAIText(
-      `You are a cybersecurity expert. Analyze this website thoroughly.\n` +
-      `URL: ${url}\nTitle: ${title || "N/A"}\n` +
-      `Content preview: ${(bodyText || "").slice(0, 1000)}\n` +
-      `Pre-scan: piracy_score=${piracy.score}, phishing_score=${phishing.score}\n\n` +
-      `Check ALL threats: phishing, piracy (torrents/streaming/warez/cracked software), ` +
-      `malware distribution, scam, social engineering, harmful content.\n` +
-      `Reply ONLY with JSON:\n` +
-      `{"phishing":0-100,"piracy":0-100,"malware":0-100,"scam":0-100,` +
-      `"flags":["f1","f2","f3"],"verdict":"one sentence","safe":true/false}`
-    );
-    aiResult = parseJSON(aiText);
+    const classifier = await getTextClassifier();
+    const textToAnalyze = `URL: ${url} Title: ${title || ''} Content: ${(bodyText || '').slice(0, 500)}`;
+    const result = await classifier(textToAnalyze, ['phishing', 'piracy', 'malware', 'scam', 'safe']);
+    const labelMap = {};
+    result.labels.forEach((label, i) => { labelMap[label] = Math.round(result.scores[i] * 100); });
+    const topLabel = result.labels[0];
+    aiResult = {
+      phishing: labelMap['phishing'] || 0,
+      piracy: labelMap['piracy'] || 0,
+      malware: labelMap['malware'] || 0,
+      scam: labelMap['scam'] || 0,
+      flags: [],
+      verdict: topLabel !== 'safe' ? `AI detected possible ${topLabel}` : 'Content appears safe',
+      safe: topLabel === 'safe'
+    };
   } catch (e) {
-    console.warn("[ShieldAI] OpenRouter error:", e.message);
+    console.warn("[ShieldAI] Local AI error:", e.message);
   }
 
   // Merge results
@@ -434,7 +393,7 @@ app.post("/scan/website", async (req, res) => {
     ...piracy.flags,
     ...(aiResult?.flags || []).map(f => "🤖 " + f)
   ];
-  if (aiResult?.verdict) allFlags.unshift("OpenRouter: " + aiResult.verdict);
+  if (aiResult?.verdict) allFlags.unshift("AI: " + aiResult.verdict);
 
   const threatType = finalPiracy > finalPhishing ? "piracy" : "phishing";
 
@@ -463,18 +422,20 @@ app.post("/scan/email", async (req, res) => {
 
   let aiResult = null;
   try {
-    const aiText = await callAIText(
-      `Email security expert. Is this email phishing or scam?\n` +
-      `Subject: ${subject || "N/A"}\nSender: ${sender || "N/A"}\n` +
-      `Body: ${(body || "").slice(0, 800)}\n` +
-      `Rules pre-score: ${rules.score}\n\n` +
-      `Reply ONLY with JSON:\n` +
-      `{"phishing_score":0-100,"is_phishing":true/false,` +
-      `"red_flags":["f1","f2","f3"],"verdict":"one sentence"}`
-    );
-    aiResult = parseJSON(aiText);
+    const classifier = await getTextClassifier();
+    const emailText = `Subject: ${subject || ''} From: ${sender || ''} Body: ${(body || '').slice(0, 500)}`;
+    const result = await classifier(emailText, ['phishing email', 'scam email', 'spam email', 'legitimate email']);
+    const topLabel = result.labels[0];
+    const topScore = Math.round(result.scores[0] * 100);
+    const isThreat = topLabel !== 'legitimate email';
+    aiResult = {
+      phishing_score: isThreat ? topScore : 0,
+      is_phishing: isThreat && topScore >= 50,
+      red_flags: isThreat ? [`AI: ${topLabel} (${topScore}%)`] : [],
+      verdict: isThreat ? `AI detected: ${topLabel}` : 'Email appears legitimate'
+    };
   } catch (e) {
-    console.warn("[ShieldAI] OpenRouter email error:", e.message);
+    console.warn("[ShieldAI] Local AI email error:", e.message);
   }
 
   const finalScore = Math.max(rules.score, aiResult?.phishing_score || 0);
@@ -482,7 +443,7 @@ app.post("/scan/email", async (req, res) => {
     ...rules.flags,
     ...(aiResult?.red_flags || []).map(f => "🤖 " + f)
   ];
-  if (aiResult?.verdict) finalFlags.unshift("OpenRouter: " + aiResult.verdict);
+  if (aiResult?.verdict) finalFlags.unshift("AI: " + aiResult.verdict);
 
   res.json({
     score: Math.min(finalScore, 100),
@@ -501,18 +462,20 @@ app.post("/scan/code", async (req, res) => {
 
   let aiResult = null;
   try {
-    const aiText = await callAIText(
-      `Malware analyst. Analyze this code for malicious behavior.\n` +
-      `Filename: ${filename || "unknown"}\n` +
-      `Code: ${(code || "").slice(0, 1000)}\n` +
-      `Rules pre-score: ${rules.score}\n\n` +
-      `Check: obfuscation, data exfiltration, droppers, keyloggers, cryptominers.\n` +
-      `Reply ONLY with JSON:\n` +
-      `{"malicious":true/false,"severity":0-100,"threats":["t1","t2"],"verdict":"one sentence"}`
-    );
-    aiResult = parseJSON(aiText);
+    const classifier = await getTextClassifier();
+    const codeText = `Filename: ${filename || ''} Code: ${(code || '').slice(0, 500)}`;
+    const result = await classifier(codeText, ['malicious code', 'obfuscated code', 'keylogger', 'cryptominer', 'safe code']);
+    const topLabel = result.labels[0];
+    const topScore = Math.round(result.scores[0] * 100);
+    const isMalicious = topLabel !== 'safe code';
+    aiResult = {
+      malicious: isMalicious && topScore >= 50,
+      severity: isMalicious ? topScore : 0,
+      threats: isMalicious ? [`${topLabel} (${topScore}%)`] : [],
+      verdict: isMalicious ? `AI detected: ${topLabel}` : 'Code appears safe'
+    };
   } catch (e) {
-    console.warn("[ShieldAI] OpenRouter code error:", e.message);
+    console.warn("[ShieldAI] Local AI code error:", e.message);
   }
 
   const finalScore = Math.max(rules.score, aiResult?.severity || 0);
@@ -520,7 +483,7 @@ app.post("/scan/code", async (req, res) => {
     ...rules.flags,
     ...(aiResult?.threats || []).map(t => "🤖 " + t)
   ];
-  if (aiResult?.verdict) finalFlags.unshift("OpenRouter: " + aiResult.verdict);
+  if (aiResult?.verdict) finalFlags.unshift("AI: " + aiResult.verdict);
 
   res.json({
     score: Math.min(finalScore, 100),
@@ -557,7 +520,7 @@ app.post("/scan/image", async (req, res) => {
     } catch {}
   }
 
-  // ── STEP 2: Try to get image and send to OpenRouter Vision ────────────
+  // ── STEP 2: Try to get image for local AI analysis ───────────────
   let imgBase64 = imageBase64 || null;
   let imgMediaType = mediaType || "image/jpeg";
 
@@ -574,80 +537,52 @@ app.post("/scan/image", async (req, res) => {
     }
   }
 
-  // ── STEP 3: OpenRouter Vision Analysis ───────────────────────────────
+  // ── STEP 3: Local Image Classification ───────────────────────────
   let aiResult = null;
   if (imgBase64) {
     try {
-      source = "OpenRouter-vision";
-      const { imageUrl } = req.body;
-
-      // ADD THIS ABOVE the call
-      const prompt = `
-      Analyze this image and determine whether it is AI-generated or a real photograph.
-
-      Respond ONLY in JSON:
-      {
-        "real_score": number (0-100),
-        "ai_score": number (0-100),
-        "reason": "short explanation"
-      }
-      `;
-
-      const aiText = await callOpenRouterVision(imageUrl, prompt,
-        `You are an expert at detecting AI-generated images vs real photographs.
-
-        Analyze this image carefully for these AI generation artifacts:
-        - Perfect symmetry or unnaturally smooth skin/textures
-        - Distorted or fused fingers, hands, or limbs
-        - Incoherent background details or impossible geometry
-        - Text or signs with garbled/nonsense letters
-        - Unnaturally perfect lighting with no environmental shadows
-        - Eyes that are glassy, asymmetric, or oddly reflective
-        - Hair that merges into background or has unrealistic flow
-        - Accessories or jewelry that morph or defy physics
-        - Facial features that are too perfect or subtly "wrong"
-        - Watermarks from Midjourney, DALL-E, Stable Diffusion, etc.
-
-        Also check if this could be a DEEPFAKE:
-        - Facial boundary artifacts or blending seams
-        - Unnatural blinking patterns or expressions
-        - Lighting inconsistency between face and background
-
-        Reply ONLY with JSON:
-        {
-          "ai_score": 0-100,
-          "is_ai_generated": true/false,
-          "is_deepfake": true/false,
-          "confidence": "low/medium/high",
-          "artifacts": ["artifact1", "artifact2"],
-          "verdict": "one clear sentence",
-          "generator": "Midjourney/DALL-E/Stable Diffusion/Unknown/Real"
-        }`
-      );
-      aiResult = parseJSON(aiText);
-      if (aiResult) {
-        score = Math.max(score, aiResult.ai_score || 0);
-        if (aiResult.is_ai_generated) flags.unshift("🤖 AI GENERATED IMAGE DETECTED");
-        if (aiResult.is_deepfake) { score = Math.max(score, 85); flags.unshift("⚠️ POSSIBLE DEEPFAKE DETECTED"); }
-        if (aiResult.generator && aiResult.generator !== "Real") flags.push("Generator: " + aiResult.generator);
-        if (aiResult.confidence) flags.push("Confidence: " + aiResult.confidence);
-        (aiResult.artifacts || []).forEach(a => flags.push("Artifact: " + a));
-      }
+      source = "local-vision";
+      const classifier = await getImageClassifier();
+      const dataUrl = `data:${imgMediaType};base64,${imgBase64}`;
+      const classResult = await classifier(dataUrl, { topk: 3 });
+      const topPrediction = classResult[0];
+      const topConfidence = Math.round(topPrediction.score * 100);
+      // Low classifier confidence on all classes may suggest synthetic/unusual content
+      const aiScore = topConfidence < 40 ? 35 : 10;
+      aiResult = {
+        ai_score: aiScore,
+        is_ai_generated: aiScore >= 50,
+        is_deepfake: false,
+        confidence: topConfidence > 70 ? "high" : topConfidence > 40 ? "medium" : "low",
+        artifacts: classResult.map(r => `${r.label} (${Math.round(r.score * 100)}%)`),
+        verdict: `Image content: ${topPrediction.label}`,
+        generator: "Unknown"
+      };
+      score = Math.max(score, aiResult.ai_score);
+      if (aiResult.is_ai_generated) flags.unshift("🤖 AI GENERATED IMAGE DETECTED");
+      if (aiResult.confidence) flags.push("Confidence: " + aiResult.confidence);
+      (aiResult.artifacts || []).forEach(a => flags.push("Classified: " + a));
     } catch (e) {
-      console.warn("[ShieldAI] OpenRouter Vision error:", e.message);
+      console.warn("[ShieldAI] Local vision AI error:", e.message);
       flags.push("Vision AI unavailable: " + e.message);
     }
   } else {
-    // No image available — use URL-based heuristics only
+    // No image available — use URL-based text classification
     flags.push("Image could not be analyzed (URL-only scan)");
     try {
-      const urlHint = await callAIText(
-        "Based only on this image URL, guess if it might be AI-generated.\n" +
-        "URL: " + imageUrl + "\n" +
-        "Reply ONLY with JSON: {\"ai_score\":0-100,\"verdict\":\"one sentence\"}"
-      );
-      const hint = parseJSON(urlHint);
-      if (hint) { score = Math.max(score, hint.ai_score || 0); }
+      if (imageUrl) {
+        const classifier = await getTextClassifier();
+        const result = await classifier(
+          `Image URL: ${imageUrl}`,
+          ['AI generated image', 'real photograph', 'AI artwork', 'stock photo']
+        );
+        const topLabel = result.labels[0];
+        const topScore = Math.round(result.scores[0] * 100);
+        if (topLabel !== 'real photograph' && topLabel !== 'stock photo') {
+          score = Math.max(score, topScore);
+          flags.push(`URL hint: ${topLabel} (${topScore}%)`);
+        }
+      }
     } catch {}
   }
 
@@ -688,9 +623,17 @@ app.post("/scan/download", async (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`✅ ShieldAI backend running on port ${PORT}`);
-  console.log("OpenRouter Key Loaded:", !!OPENROUTER_API_KEY);
   console.log(`   GSB key:    ${GOOGLE_SAFE_BROWSING_KEY !== "YOUR_GOOGLE_SAFE_BROWSING_KEY" ? "✓ configured" : "✗ not set (optional)"}`);
   console.log(`   VT key:     ${VIRUSTOTAL_KEY !== "YOUR_VIRUSTOTAL_KEY" ? "✓ configured" : "✗ not set (optional)"}`);
+
+  // Pre-load local AI models in background so first requests are fast
+  try {
+    console.log('⏳ Loading local AI models...');
+    await Promise.all([getTextClassifier(), getImageClassifier()]);
+    console.log('✅ Local AI models loaded');
+  } catch (e) {
+    console.warn('⚠️  Local AI models unavailable:', e.message, '(rule-based detection still active)');
+  }
 });
