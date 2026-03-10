@@ -7,9 +7,9 @@ Firefox Extension
       ↓
   background.js
       ↓
-  Your Node.js Backend  ← API key lives here (safe)
+  Your Node.js Backend  ← runs all AI locally (no API keys needed)
       ↓
-  Claude AI + Google Safe Browsing + VirusTotal
+  Local AI Models (Transformers.js) + Google Safe Browsing + VirusTotal
 ```
 
 ---
@@ -28,26 +28,31 @@ cd backend
 # Install dependencies
 npm install
 
-# Add your API keys (edit server.js lines 8-10)
+# Add your API keys (edit server.js lines 15-17)
 # OR set environment variables:
 
 # Windows:
-set CLAUDE_API_KEY=sk-ant-api03-YOUR_KEY
+set GSB_KEY=YOUR_GOOGLE_SAFE_BROWSING_KEY
 node server.js
 
 # Mac/Linux:
-CLAUDE_API_KEY=sk-ant-api03-YOUR_KEY node server.js
+GSB_KEY=YOUR_GOOGLE_SAFE_BROWSING_KEY node server.js
 ```
 
 You should see:
 ```
 ✅ ShieldAI backend running on port 3000
-   Claude key: ✓ configured
+   GSB key: ✗ not set (optional)
+   VT key:  ✗ not set (optional)
+⏳ Loading local AI models...
+✅ Local AI models loaded
 ```
 
 ### Test it works
 Open browser and go to: http://localhost:3000
-You should see: `{"status":"ShieldAI backend running","version":"2.0"}`
+You should see: `{"status":"ShieldAI backend running","version":"3.0"}`
+
+Check model status: http://localhost:3000/health
 
 ---
 
@@ -73,20 +78,15 @@ You should see: `{"status":"ShieldAI backend running","version":"2.0"}`
 
 ## STEP 4 — Get Free API Keys (All Optional but Recommended)
 
-### Claude AI (main AI engine)
-- Go to: https://console.anthropic.com
-- Create account → API Keys → Create Key
-- Add to server.js line 8: `const CLAUDE_API_KEY = "sk-ant-..."`
-
 ### Google Safe Browsing (free, 10,000 req/day)
 - Go to: https://console.cloud.google.com
 - Enable "Safe Browsing API"
 - Create credentials → API Key
-- Add to server.js line 9: `const GOOGLE_SAFE_BROWSING_KEY = "AIza..."`
+- Set env var: `GSB_KEY=AIza...`
 
 ### VirusTotal (free, 4 req/min)
 - Go to: https://virustotal.com → Sign up → Profile → API Key
-- Add to server.js line 10: `const VIRUSTOTAL_KEY = "..."`
+- Set env var: `VT_KEY=...`
 
 ---
 
@@ -97,7 +97,6 @@ You should see: `{"status":"ShieldAI backend running","version":"2.0"}`
 2. New → Web Service → Connect your GitHub repo
    (Or: New → Web Service → Deploy from a public Git URL)
 3. Set environment variables in Render dashboard:
-   - `CLAUDE_API_KEY` = your key
    - `GSB_KEY` = your Google key
    - `VT_KEY` = your VirusTotal key
 4. Deploy → copy your URL like: `https://shieldai-xyz.onrender.com`
@@ -117,13 +116,27 @@ Just keep `node server.js` running while using the extension.
 
 | Threat | Method |
 |--------|--------|
-| Phishing websites | URL rules + brand detection + Claude AI |
-| Piracy sites | 60+ known domains database + keyword scan |
-| Malicious JavaScript | 16 pattern rules + entropy analysis + Claude AI |
+| Phishing websites | URL rules + brand detection + AI (`nli-deberta-v3-small`) |
+| Piracy sites | 150+ known domains + content fingerprinting + AI zero-shot |
+| Malicious JavaScript | 16+ pattern rules + entropy analysis + AI |
 | Harmful downloads | Extension blocklist + VirusTotal API |
-| Email phishing | Sender spoofing + urgency words + Claude AI |
-| Suspicious images | Host + size + filename analysis |
+| Email phishing | Sender spoofing + urgency words + AI + sentiment analysis |
+| AI-generated images | URL heuristics + CLIP zero-shot + ViT + deepfake detection |
 | Known malware URLs | Google Safe Browsing API |
+
+---
+
+## AI Models Used (100% Free & Local, Never Expire)
+
+All models run locally via `@xenova/transformers` — no API keys, no cost, no expiration.
+Models are downloaded once and cached automatically (~650MB total: DeBERTa ~150MB, CLIP ~350MB, DistilBERT ~67MB, ViT ~86MB).
+
+| Model | Purpose | Notes |
+|-------|---------|-------|
+| `Xenova/nli-deberta-v3-small` | Zero-shot classification (phishing, piracy, malware) | Primary; falls back to distilbart-mnli-12-3, then mobilebert |
+| `Xenova/clip-vit-base-patch32` | Zero-shot image-text matching for AI image detection | Directly asks "Is this AI generated?" |
+| `Xenova/distilbert-base-uncased-finetuned-sst-2-english` | Sentiment analysis for email phishing | Phishing emails are highly negative/fear-inducing |
+| `Xenova/vit-base-patch16-224` | Image content metadata (secondary signal) | Kept as supporting signal |
 
 ---
 
@@ -132,8 +145,8 @@ Just keep `node server.js` running while using the extension.
 **Extension shows "Backend offline"**
 → Make sure `node server.js` is running in terminal
 
-**Backend runs but Claude not working**
-→ Check your API key is correct in server.js
+**Models slow to load on first run**
+→ Models are downloaded and cached on first use (~650MB total). Subsequent starts are fast.
 
 **Extension not scanning pages**
 → Go to about:debugging → click Inspect on ShieldAI → check Console tab
