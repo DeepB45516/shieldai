@@ -19,12 +19,29 @@ const PORT = process.env.PORT || 3000;
 // ── LOCAL AI MODELS (zero API key, zero cost) ─────────────────────
 let _textClassifierPromise = null;
 let _imageClassifierPromise = null;
+let _clipModelPromise = null;
+let _sentimentPipeline = null;
 
 function getTextClassifier() {
   if (!_textClassifierPromise) {
-    _textClassifierPromise = import('@xenova/transformers').then(({ pipeline }) =>
-      pipeline('zero-shot-classification', 'Xenova/mobilebert-uncased-mnli')
-    );
+    _textClassifierPromise = import('@xenova/transformers').then(async ({ pipeline }) => {
+      // Try strongest model first, fall back to alternatives
+      const models = [
+        'Xenova/nli-deberta-v3-small',
+        'Xenova/distilbart-mnli-12-3',
+        'Xenova/mobilebert-uncased-mnli'  // legacy fallback
+      ];
+      for (const model of models) {
+        try {
+          const p = await pipeline('zero-shot-classification', model);
+          console.log(`[ShieldAI] Loaded text classifier: ${model}`);
+          return p;
+        } catch (e) {
+          console.warn(`[ShieldAI] Could not load ${model}: ${e.message}`);
+        }
+      }
+      throw new Error('No text classifier model available');
+    });
   }
   return _textClassifierPromise;
 }
@@ -36,6 +53,24 @@ function getImageClassifier() {
     );
   }
   return _imageClassifierPromise;
+}
+
+function getClipClassifier() {
+  if (!_clipModelPromise) {
+    _clipModelPromise = import('@xenova/transformers').then(({ pipeline }) =>
+      pipeline('zero-shot-image-classification', 'Xenova/clip-vit-base-patch32')
+    );
+  }
+  return _clipModelPromise;
+}
+
+function getSentimentClassifier() {
+  if (!_sentimentPipeline) {
+    _sentimentPipeline = import('@xenova/transformers').then(({ pipeline }) =>
+      pipeline('text-classification', 'Xenova/distilbert-base-uncased-finetuned-sst-2-english')
+    );
+  }
+  return _sentimentPipeline;
 }
 
 // ── FETCH IMAGE AS BASE64 ─────────────────────────────────────────
@@ -87,7 +122,18 @@ const PIRACY_DOMAINS = [
   "z-lib","annas-archive","trantor","mobilism","audiobookbay",
   "y2mate","savefrom","clipconverter","mp3juices","flvto",
   "desiremovies","katmoviehd","extramovies","ssrmovies","cinemavilla",
-  "1tamilmv","tamilblasters","dvdplay","uwatchfree","5movierulz"
+  "1tamilmv","tamilblasters","dvdplay","uwatchfree","5movierulz",
+  // 2025/2026 additions
+  "hurawatch","himovies","sflix","cuevana","pelisplus","repelis","cinecalidad",
+  "gnula","seriesflix","divxtotal","elitetorrent","mejortorrent","newpct",
+  "todotorrents","zonatorrent","btdig","idope","snowfl","academictorrents",
+  "pirateproxy","unblockit","fmovies24","watchomovies","vegamovies",
+  "themoviescatalog","moviespapa","ofilmywap","skymovieshd","allmovieshub",
+  "coolmoviez","hubflix","mlsbd","pirlotv","rojadirecta","livetv","atdhe",
+  "1movies","putlockers","watchseries","flixtor","popcorntime","stremio-addons",
+  "real-debrid","premiumize","offcloud",
+  "fitgirl-repack","dodi-repacks","xatab-repack","corepack",
+  "hdencode","rartv","scenep2p","privatehd"
 ];
 
 const PIRACY_KEYWORDS = [
@@ -106,6 +152,15 @@ const PIRACY_KEYWORDS = [
   "torrent download", "direct download link", "ddl", "mega link", "mediafire link"
 ];
 
+const PIRACY_STRUCTURE_PATTERNS = [
+  { re: /iframe.*?(openload|streamtape|vidoza|mixdrop|upstream|doodstream|filemoon)/i, label: "Piracy video host embed", score: 60 },
+  { re: /(720p|1080p|2160p|4k).{0,50}(download|stream|watch|play)/i, label: "Quality-based download selector", score: 30 },
+  { re: /dmca.*?remov|copyright.*?notice|takedown.*?request/i, label: "DMCA removal notice (piracy indicator)", score: 40 },
+  { re: /complete.*?season|all.*?episodes|season.*?pack/i, label: "Complete season download pattern", score: 25 },
+  { re: /download.*?now.*?free|click.*?download|download.*?button/i, label: "Fake download button pattern", score: 20 },
+  { re: /disable.*?adblocker|turn.*?off.*?adblock|whitelist.*?site/i, label: "Anti-adblock (common on piracy sites)", score: 15 },
+];
+
 const PHISHING_BRANDS = [
   "paypal","apple","google","microsoft","amazon","netflix","facebook",
   "instagram","twitter","linkedin","dropbox","adobe","chase","wellsfargo",
@@ -121,6 +176,12 @@ const PHISHING_BRANDS = [
   "github","gitlab","bitbucket","heroku","vercel","netlify",
   "aws","azure","gcp","digitalocean","cloudflare"
 ];
+
+// ── DETECTION THRESHOLDS ──────────────────────────────────────────
+const SIGNIFICANT_THREAT_THRESHOLD = 30;  // min score for a signal to count toward ensemble boost
+const CLIP_AI_DETECTION_THRESHOLD = 0.4;  // CLIP confidence threshold for AI-generated image
+const DEEPFAKE_DETECTION_THRESHOLD = 0.3; // CLIP confidence threshold for deepfake signal
+const SENTIMENT_CONFIDENCE_THRESHOLD = 0.85; // sentiment negativity threshold for phishing boost
 
 const MALCODE_PATTERNS = [
   { re: /eval\s*\(\s*atob\s*\(/, label: "Base64 eval dropper" },
@@ -277,6 +338,13 @@ function rulesPiracy(url, title, bodyText) {
   const dlLinkCount = (combined.match(/https?:\/\/[^\s"'<>]+\.(torrent|zip|rar|mkv|mp4|avi)/gi) || []).length;
   if (dlLinkCount >= 5) {
     score += 25; flags.push(`Excessive download links (${dlLinkCount})`);
+  }
+
+  // Content structure fingerprinting
+  for (const { re, label, score: s } of PIRACY_STRUCTURE_PATTERNS) {
+    if (re.test(combined)) {
+      score += s; flags.push(label);
+    }
   }
 
   return { score: Math.min(score, 100), flags };
@@ -530,7 +598,25 @@ async function checkVirusTotal(url) {
 
 // Health check
 app.get("/", (req, res) => {
-  res.json({ status: "ShieldAI backend running", version: "2.0" });
+  res.json({ status: "ShieldAI backend running", version: "3.0" });
+});
+
+// Detailed health/model status endpoint
+app.get("/health", (req, res) => {
+  res.json({
+    status: "running",
+    version: "3.0",
+    models: {
+      textClassifier: !!_textClassifierPromise,
+      imageClassifier: !!_imageClassifierPromise,
+      clipClassifier: !!_clipModelPromise,
+      sentimentClassifier: !!_sentimentPipeline
+    },
+    apis: {
+      safeBrowsing: GOOGLE_SAFE_BROWSING_KEY !== "YOUR_GOOGLE_SAFE_BROWSING_KEY",
+      virusTotal: VIRUSTOTAL_KEY !== "YOUR_VIRUSTOTAL_KEY"
+    }
+  });
 });
 
 // ── MAIN WEBSITE SCAN ─────────────────────────────────────────────
@@ -565,23 +651,24 @@ app.post("/scan/website", async (req, res) => {
     const classifier = await getTextClassifier();
     const textToAnalyze = `Analyze this web page for threats. URL: ${url} Page title: ${title || 'unknown'} Content snippet: ${(bodyText || '').slice(0, 600)}`;
     const result = await classifier(textToAnalyze, [
-      'phishing credential theft',
-      'piracy copyright infringement',
-      'malware distribution',
-      'scam fraud deception',
-      'legitimate safe content'
+      'this website offers illegal pirated movies, TV shows, or software downloads for free',
+      'this is a phishing website impersonating a legitimate service to steal credentials',
+      'this website distributes malware, viruses, or ransomware',
+      'this is a scam or fraud website with deceptive content',
+      'this is a legitimate safe website with legal content'
     ]);
     const labelMap = {};
     result.labels.forEach((label, i) => { labelMap[label] = Math.round(result.scores[i] * 100); });
     const topLabel = result.labels[0];
+    const safeLabel = 'this is a legitimate safe website with legal content';
     aiResult = {
-      phishing: labelMap['phishing credential theft'] || 0,
-      piracy: labelMap['piracy copyright infringement'] || 0,
-      malware: labelMap['malware distribution'] || 0,
-      scam: labelMap['scam fraud deception'] || 0,
+      phishing: labelMap['this is a phishing website impersonating a legitimate service to steal credentials'] || 0,
+      piracy: labelMap['this website offers illegal pirated movies, TV shows, or software downloads for free'] || 0,
+      malware: labelMap['this website distributes malware, viruses, or ransomware'] || 0,
+      scam: labelMap['this is a scam or fraud website with deceptive content'] || 0,
       flags: [],
-      verdict: topLabel !== 'legitimate safe content' ? `AI detected possible ${topLabel}` : 'Content appears safe',
-      safe: topLabel === 'legitimate safe content'
+      verdict: topLabel !== safeLabel ? `AI detected possible ${topLabel}` : 'Content appears safe',
+      safe: topLabel === safeLabel
     };
   } catch (e) {
     console.warn("[ShieldAI] Local AI error:", e.message);
@@ -592,7 +679,11 @@ app.post("/scan/website", async (req, res) => {
   const finalPiracy = Math.max(piracy.score, aiResult?.piracy || 0);
   const finalMalware = Math.max(aiResult?.malware || 0, sbResult.flagged ? 80 : 0);
   const finalScam = aiResult?.scam || 0;
-  const finalScore = Math.max(finalPhishing, finalPiracy, finalMalware, finalScam);
+
+  // Ensemble boost: when 2+ independent signals agree on threat, boost confidence
+  const significantScores = [finalPhishing, finalPiracy, finalMalware, finalScam].filter(s => s >= SIGNIFICANT_THREAT_THRESHOLD);
+  const ensembleBoost = significantScores.length >= 3 ? 15 : significantScores.length >= 2 ? 10 : 0;
+  const finalScore = Math.min(Math.max(finalPhishing, finalPiracy, finalMalware, finalScam) + ensembleBoost, 100);
 
   const allFlags = [
     ...phishing.flags,
@@ -644,14 +735,16 @@ app.post("/scan/email", async (req, res) => {
     const classifier = await getTextClassifier();
     const emailText = `Classify this email for threats. Subject: ${subject || ''} From: ${sender || ''} Body: ${(body || '').slice(0, 600)}`;
     const result = await classifier(emailText, [
-      'phishing email credential theft',
-      'scam fraud email',
-      'spam unsolicited email',
-      'legitimate genuine email'
+      'this is a phishing email trying to steal login credentials or personal information',
+      'this is a scam email trying to defraud the recipient with fake offers',
+      'this is an unsolicited spam email with advertisements or promotions',
+      'this is a business email compromise attempt impersonating an executive',
+      'this is a legitimate genuine professional or personal email'
     ]);
     const topLabel = result.labels[0];
     const topScore = Math.round(result.scores[0] * 100);
-    const isThreat = topLabel !== 'legitimate genuine email';
+    const safeLabel = 'this is a legitimate genuine professional or personal email';
+    const isThreat = topLabel !== safeLabel;
     aiResult = {
       phishing_score: isThreat ? topScore : 0,
       is_phishing: isThreat && topScore >= 50,
@@ -662,12 +755,27 @@ app.post("/scan/email", async (req, res) => {
     console.warn("[ShieldAI] Local AI email error:", e.message);
   }
 
-  const finalScore = Math.max(rules.score, aiResult?.phishing_score || 0);
+  let finalScore = Math.max(rules.score, aiResult?.phishing_score || 0);
   const finalFlags = [
     ...rules.flags,
     ...(aiResult?.red_flags || []).map(f => "🤖 " + f)
   ];
   if (aiResult?.verdict) finalFlags.unshift("AI: " + aiResult.verdict);
+
+  // Secondary signal: sentiment analysis (phishing emails typically use fear/urgency = NEGATIVE)
+  try {
+    const sentimentClassifier = await getSentimentClassifier();
+    const sentResult = await sentimentClassifier((body || '').slice(0, 512));
+    if (sentResult[0].label === 'NEGATIVE' && sentResult[0].score > SENTIMENT_CONFIDENCE_THRESHOLD) {
+      const sentBoost = Math.round(sentResult[0].score * 20);
+      if (rules.score >= 15 || (aiResult && aiResult.phishing_score >= 30)) {
+        finalScore = Math.min(100, finalScore + sentBoost);
+        finalFlags.push(`Negative sentiment boost: +${sentBoost} (${Math.round(sentResult[0].score * 100)}% negative)`);
+      }
+    }
+  } catch (e) {
+    console.warn("[ShieldAI] Sentiment analysis error:", e.message);
+  }
 
   const sourceCount = [
     rules.score >= 30,
@@ -832,6 +940,7 @@ app.post("/scan/image", async (req, res) => {
   let source = "rules";
   let generator = "Unknown";
   let vitConfidence = null;
+  let is_deepfake = false;
 
   console.log("[ShieldAI] Image scan:", (imageUrl || "base64 data").slice(0, 80));
 
@@ -869,7 +978,33 @@ app.post("/scan/image", async (req, res) => {
       vitConfidence = Math.round(topPrediction.score * 100);
       classResult.forEach(r => flags.push(`Classified: ${r.label} (${Math.round(r.score * 100)}%)`));
 
-      // 3b. Zero-shot text classifier on combined image description
+      // 3b. CLIP zero-shot: directly ask "Is this AI generated?"
+      try {
+        const clipClassifier = await getClipClassifier();
+        const clipResult = await clipClassifier(dataUrl, [
+          'an AI generated image, artificial, synthetic, computer generated',
+          'a real photograph taken by a camera, natural, authentic',
+          'digital art, illustration, drawing, painting',
+          'a deepfake image, face manipulation, face swap'
+        ]);
+        const aiLabel = clipResult.find(r => r.label.includes('AI generated'));
+        const deepfakeLabel = clipResult.find(r => r.label.includes('deepfake'));
+        if (aiLabel && aiLabel.score > CLIP_AI_DETECTION_THRESHOLD) {
+          const clipScore = Math.round(aiLabel.score * 100);
+          score = Math.max(score, clipScore);
+          flags.push(`CLIP AI detection: ${clipScore}%`);
+          if (generator === 'Unknown') generator = 'AI (CLIP)';
+        }
+        if (deepfakeLabel && deepfakeLabel.score > DEEPFAKE_DETECTION_THRESHOLD) {
+          const dfScore = Math.round(deepfakeLabel.score * 100);
+          flags.push(`CLIP deepfake signal: ${dfScore}%`);
+          is_deepfake = dfScore >= 50;
+        }
+      } catch (e) {
+        console.warn("[ShieldAI] CLIP classification error:", e.message);
+      }
+
+      // 3c. Zero-shot text classifier on combined image description
       try {
         const textClassifier = await getTextClassifier();
         const filename = extractFilename(imageUrl);
@@ -893,7 +1028,7 @@ app.post("/scan/image", async (req, res) => {
         console.warn("[ShieldAI] Zero-shot classification error:", e.message);
       }
 
-      // 3c. ViT low-confidence bonus — uncertain classifier + other signals
+      // 3d. ViT low-confidence bonus — uncertain classifier + other signals
       if (vitConfidence < 30 && score > 0) {
         score = Math.min(100, score + 15);
         flags.push("Low ViT confidence with other signals — boosting score");
@@ -938,7 +1073,7 @@ app.post("/scan/image", async (req, res) => {
   res.json({
     score: Math.min(score, 100),
     is_ai: score >= 50,
-    is_deepfake: false,
+    is_deepfake,
     confidence,
     generator,
     flags,
@@ -980,7 +1115,12 @@ app.listen(PORT, async () => {
   // Pre-load local AI models in background so first requests are fast
   try {
     console.log('⏳ Loading local AI models...');
-    await Promise.all([getTextClassifier(), getImageClassifier()]);
+    await Promise.all([
+      getTextClassifier(),
+      getImageClassifier(),
+      getClipClassifier(),
+      getSentimentClassifier()
+    ]);
     console.log('✅ Local AI models loaded');
   } catch (e) {
     console.warn('⚠️  Local AI models unavailable:', e.message, '(rule-based detection still active)');
